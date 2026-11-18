@@ -1,10 +1,10 @@
-// The token radar's model: one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model: one sealed snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and adds
 // pre-token protocols below the watchlist floor, chosen by CALIBRATED implied value: the early rows the
-// radar exists to find. A protocol is pre-token when its index entry records no token (no market cap, no
-// CoinGecko id, no symbol); the snapshot's live-token protocols are kept apart and shown as the market's
-// own values, never mixed into the ranked board.
+// radar exists to find. A protocol is pre-token when its index entry records no token at all (no market
+// cap, no CoinGecko id, no symbol); the snapshot's live-token protocols are kept apart and shown as the
+// market's own values, never mixed into the ranked board.
 //
 // Implied value follows only from the snapshot's own figures:
 //
@@ -42,7 +42,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-/** The model's constants, as the dashboard states them and the sandbox may change them. */
+/** The model's constants: the dashboard publishes all of them and the calibration reads them. */
 export interface ModelConstants {
   multiple_floor: number;
   multiple_cap: number;
@@ -106,11 +106,11 @@ export interface GlobalCalibration {
 export interface Calibration {
   global: GlobalCalibration;
   categories: CalibrationRow[];
-  /** Applied multiple for one protocol category (null categories read as the uncategorised bucket). */
+  /** Applied multiple for one protocol category (a null category reads as the uncategorised bucket). */
   forCategory(category: string | null): { multiple: number; basis: MultipleBasis; clamped: boolean };
 }
 
-/** A farm step: the action, what it costs, and how long it takes. */
+/** A farm step before it is flattened to the one string board.json carries. */
 export interface FarmStep {
   text: string;
   cost: string;
@@ -210,14 +210,14 @@ const UNCATEGORISED = 'Uncategorised';
 
 /** A finite number, else `fallback`. */
 function finite(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
 const bySlugText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** A whole day count from `from` to `to`, clamped at zero; null when either date is absent or bad. */
+/** A whole day count from `asOf` back to `listedAt`, clamped at zero; null when either date is absent or bad. */
 export function ageDays(asOf: string, listedAt: string | null): number | null {
   if (listedAt === null) return null;
   const a = Date.parse(`${asOf}T00:00:00Z`);
@@ -226,7 +226,7 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
-/** The median of a list of finite numbers, or null when empty. */
+/** The median of finite numbers, or null when empty. Even counts average the two middle values. */
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = values.slice().sort((a, b) => a - b);
@@ -281,41 +281,22 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
     const med = median(ratios);
     if (ratios.length < model.min_category_peers || med === null) {
       const basis: MultipleBasis = globalMedian === null ? 'neutral' : 'global';
-      rows.push({
-        category: key,
-        peers: ratios.length,
-        median_multiple: med === null ? null : round4(med),
-        applied_multiple: globalApplied,
-        basis,
-        clamped: globalMedian === null ? false : globalClamped,
-      });
-      applied.set(key, { multiple: globalApplied, basis, clamped: globalMedian === null ? false : globalClamped });
+      const clamped = globalMedian === null ? false : globalClamped;
+      rows.push({ category: key, peers: ratios.length, median_multiple: med === null ? null : round4(med), applied_multiple: globalApplied, basis, clamped });
+      applied.set(key, { multiple: globalApplied, basis, clamped });
     } else {
       const c = clampMultiple(med);
       const value = round6(c.value);
-      rows.push({
-        category: key,
-        peers: ratios.length,
-        median_multiple: round4(med),
-        applied_multiple: value,
-        basis: 'category',
-        clamped: c.clamped,
-      });
+      rows.push({ category: key, peers: ratios.length, median_multiple: round4(med), applied_multiple: value, basis: 'category', clamped: c.clamped });
       applied.set(key, { multiple: value, basis: 'category', clamped: c.clamped });
     }
   }
 
   return {
-    global: {
-      peers: globalRatios.length,
-      median_multiple: globalMedian === null ? null : round4(globalMedian),
-      applied_multiple: globalApplied,
-      clamped: globalClamped,
-    },
+    global: { peers: globalRatios.length, median_multiple: globalMedian === null ? null : round4(globalMedian), applied_multiple: globalApplied, clamped: globalClamped },
     categories: rows,
     forCategory(category: string | null): { multiple: number; basis: MultipleBasis; clamped: boolean } {
-      const key = category ?? UNCATEGORISED;
-      const hit = applied.get(key);
+      const hit = applied.get(category ?? UNCATEGORISED);
       if (hit !== undefined) return hit;
       // A category the tokenized set never names: no category peers at all, so the global fallback applies.
       return { multiple: globalApplied, basis: globalMedian === null ? 'neutral' : 'global', clamped: globalMedian === null ? false : globalClamped };
@@ -323,7 +304,7 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
   };
 }
 
-/** The three multipliers and the implied value one protocol gets under `model` and `calibration`. */
+/** The three multipliers, the base multiple and the implied value one protocol gets under `model` and `calibration`. */
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
@@ -364,7 +345,7 @@ export function isRankable(p: SnapshotProtocol): boolean {
   return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name);
 }
 
-/** The snapshot's protocol by slug. */
+/** The snapshot's protocols by slug. */
 function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
 }
@@ -376,7 +357,6 @@ export function buildBoard(
   calibration: Calibration = calibrate(snapshot, model),
 ): BoardRow[] {
   const index = bySlug(snapshot.protocols);
-  const watch = new Set(snapshot.watchlist);
   const chosen = new Map<string, SnapshotProtocol>();
   // The watchlist is the floor: every slug the snapshot carries is chosen before any early row.
   for (const slug of snapshot.watchlist) {
@@ -389,11 +369,7 @@ export function buildBoard(
   const early = snapshot.protocols
     .filter((p) => !chosen.has(p.slug) && isRankable(p) && p.tvl_usd < snapshot.floor_usd)
     .map((p) => ({ p, score: impliedValue(p, snapshot.as_of, model, calibration) }))
-    .sort(
-      (a, b) =>
-        b.score.implied - a.score.implied ||
-        bySlugText(a.p.slug, b.p.slug),
-    )
+    .sort((a, b) => b.score.implied - a.score.implied || bySlugText(a.p.slug, b.p.slug))
     .slice(0, earlyBudget);
   for (const e of early) chosen.set(e.p.slug, e.p);
 
@@ -454,7 +430,7 @@ function gasFor(capital: number): number {
 }
 
 /** How long to hold, from the protocol's age: younger protocols get a longer qualifying window. */
-function holdDaysFor(age: number | null): number {
+export function holdDaysFor(age: number | null): number {
   if (age === null) return 30;
   if (age < 180) return 60;
   if (age < 365) return 45;
@@ -464,7 +440,7 @@ function holdDaysFor(age: number | null): number {
 /**
  * The category's one verifiable on-chain action, in the words a farmer can follow. Every action is a
  * real interaction the protocol's own app supports (supply, LP, bridge, stake, margin, vault deposit);
- * no points program, airdrop, token name or launch date is claimed, because the snapshot carries none.
+ * no reward program, token name or launch date is claimed, because the snapshot carries none.
  */
 function actionFor(p: SnapshotProtocol, capital: number, chain: string): string {
   const c = (p.category ?? '').toLowerCase();
@@ -479,7 +455,7 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
     return `Bridge $${capital} of USDC to ${chain} through ${name} and keep the bridged balance in its app.`;
   }
   if (c.includes('restak')) {
-    return `Restake $${capital} of a liquid staking token through ${name} on ${chain} and keep the receipt.`;
+    return `Restake $${capital} of a liquid staking asset through ${name} on ${chain} and keep the receipt.`;
   }
   if (c.includes('stak') || c.includes('liquid staking') || c.includes('lst')) {
     return `Stake $${capital} of the chain's staking asset through ${name} on ${chain} and keep the staking receipt.`;
@@ -493,7 +469,7 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
   if (c.includes('curator') || c.includes('allocator') || c.includes('vault') || c.includes('yield') || c.includes('aggregator') || c.includes('leveraged farm')) {
     return `Deposit $${capital} of USDC into a ${name} vault on ${chain} and keep the vault shares.`;
   }
-  if (c.includes('stable') || c.includes('mint')) {
+  if (c.includes('stable') || c.includes('mint') || c.includes('reserve')) {
     return `Mint or deposit $${capital} of the stable asset through ${name} on ${chain} and keep it held.`;
   }
   if (c.includes('rwa')) {
@@ -508,7 +484,10 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
   return `Deposit $${capital} of USDC into ${name} on ${chain} and keep the position open.`;
 }
 
-/** A second, smaller on-chain interaction that proves real use of the app beyond the first deposit. */
+/**
+ * A second, smaller on-chain interaction that proves real use of the app beyond the first deposit. The
+ * staking branch is deliberately conditional: it never asserts that claimable rewards exist.
+ */
 function secondActionFor(p: SnapshotProtocol, chain: string): string {
   const c = (p.category ?? '').toLowerCase();
   const name = p.name;
@@ -537,9 +516,10 @@ function secondActionFor(p: SnapshotProtocol, chain: string): string {
 }
 
 /**
- * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is derived from
- * the protocol's own record (category, chains, TVL, age), never from a hand-written list of names, and
- * every action is verifiable on chain.
+ * A protocol's farm plan: six steps, each an action with a gas plus capital cost and a time. The plan is
+ * derived from the protocol's own record (category, chains, TVL, age), never from a hand-written list of
+ * names, and every action is verifiable on chain. No reward program, airdrop, token or launch date is
+ * claimed anywhere.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
@@ -548,7 +528,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const hold = holdDaysFor(age);
   return [
     {
-      text: `Set up a fresh wallet that holds only the funds for this farm, write the seed phrase offline, and send it $${capital} of USDC plus a little of ${chain}'s gas token.`,
+      text: `Set up a fresh wallet that holds only the funds for this farm, write the seed phrase offline, and send it $${capital} of USDC plus a little of ${chain}'s gas asset.`,
       cost: `$${capital} of capital plus under $3 of gas to fund the wallet`,
       time: '10 minutes',
     },
@@ -564,17 +544,17 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
     },
     {
       text: `Make one qualifying on-chain action each week inside ${p.name}, such as a deposit, a borrow, a swap, a claim or a vote, so the wallet shows repeated activity.`,
-      cost: 'about $2 of gas a week and no new capital',
+      cost: 'no new capital and about $2 of gas a week',
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot, and keep the receipt tokens in the farming wallet.`,
-      cost: `the $${capital} stays in the position and no extra gas unless you act`,
+      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot, and keep the receipt assets in the farming wallet.`,
+      cost: `the $${capital} of capital stays in the position and no gas is needed while holding`,
       time: `${hold} days`,
     },
     {
       text: `Verify every transaction on ${chain}'s block explorer and in ${p.name}'s own dashboard, record the wallet, dates and transaction hashes in a farm log, and plan an exit that sells into the pool's deepest pair.`,
-      cost: 'nothing but the log; explorer and dashboard reads are free',
+      cost: 'no new capital and under $5 of gas for the final withdrawal',
       time: '15 minutes, then a monthly check',
     },
   ];
@@ -625,10 +605,7 @@ export function radarRow(row: BoardRow, onWatchlist: boolean): RadarRow {
 }
 
 /** Everything the dashboard renders, from the snapshot. */
-export function buildRadar(
-  snapshot: Snapshot,
-  model: ModelConstants = MODEL,
-): { board: BoardRow[]; radar: RadarData } {
+export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
   const calibration = calibrate(snapshot, model);
   const board = buildBoard(snapshot, model, calibration);
   const live = liveRows(snapshot, model);
@@ -685,13 +662,7 @@ export function parseSnapshot(text: string): Snapshot {
       symbol: typeof p.symbol === 'string' ? p.symbol : null,
     };
   });
-  return {
-    as_of: o.as_of,
-    source: o.source,
-    floor_usd: o.floor_usd,
-    protocols,
-    watchlist: o.watchlist as string[],
-  };
+  return { as_of: o.as_of, source: o.source, floor_usd: o.floor_usd, protocols, watchlist: o.watchlist as string[] };
 }
 
 /** Why a board is not one the gate will take, or null: coverage, ranks, order, one shared implied value, and farm steps. */
