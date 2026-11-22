@@ -1,14 +1,123 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Calibrated Launch Radar - token-radar-01 v3</title>
-  <link rel="stylesheet" href="app.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Radar — launch value, fitted and netted</title>
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <div id="app" aria-live="polite"></div>
-  <script src="../data.js"></script>
-  <script src="app.js"></script>
+<header class="cover">
+  <div class="brandline">
+    <span class="brand"><span class="pulse"></span>TOKEN RADAR</span>
+    <span class="tag">launch value, fitted from the snapshot's own tokens</span>
+  </div>
+  <h1>What a protocol's token could be worth — and whether farming it pays.</h1>
+  <p class="lede">Every protocol the house rule keeps is priced by a curve fitted on the snapshot's tokenized peers, tested held-out twice. Each plan is eight costed on-chain steps, netted against an airdrop slice and the yield the capital gives up. Already-trading tokens sit in their own view; they never enter the ranking.</p>
+  <div class="principles">
+    <span><b>Fitted, not listed.</b> Theil-Sen log-log scale curve on 123 tokenized peers.</span>
+    <span><b>Tested twice.</b> Leave-one-out and older-to-newer, with error and 3x hit rate.</span>
+    <span><b>Netted.</b> Slice − fees − foregone yield → FARM / THIN / SKIP.</span>
+    <span><b>All 758 counted.</b> Nine ledger groups, one per protocol.</span>
+  </div>
+  <div class="kpis" id="kpi"></div>
+  <div class="integrity" id="integrity"></div>
+  <div class="coverage-strip" id="coverage-strip"></div>
+</header>
+
+<nav class="tabs" id="tabs" aria-label="Views">
+  <button class="tab on" data-view="board">Board</button>
+  <button class="tab" data-view="live">Live tokens</button>
+  <button class="tab" data-view="ledger">Ledger</button>
+  <button class="tab" data-view="method">Method</button>
+</nav>
+
+<main>
+<section id="view-board" class="view">
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Search protocol, slug or category" aria-label="Search">
+    <select id="cat" aria-label="Category"><option value="">All categories</option></select>
+    <select id="chain" aria-label="Chain"><option value="">All chains</option></select>
+    <select id="scope" aria-label="Scope">
+      <option value="">All ranked</option>
+      <option value="watch">Watchlist 40</option>
+      <option value="early">Early, not on watchlist</option>
+    </select>
+    <span class="shown" id="shown"></span>
+  </div>
+  <div class="tablewrap">
+    <table class="board" id="board">
+      <thead>
+        <tr>
+          <th class="num sortable" data-key="rank">#</th>
+          <th class="sortable" data-key="name">Protocol</th>
+          <th class="sortable" data-key="category">Category</th>
+          <th>Top chains</th>
+          <th class="num sortable" data-key="tvl_usd">TVL</th>
+          <th class="num sortable" data-key="implied_value_usd">Implied</th>
+          <th class="num">Holdout range</th>
+          <th class="num sortable" data-key="change_7d">7d TVL</th>
+          <th class="sortable" data-key="verdict">Farm call</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="view-live" class="view" hidden>
+  <div class="viewhead">
+    <h2>Tokens that already trade</h2>
+    <p>These protocols record a token and a market cap in the snapshot. They are set aside from the ranking and shown at their real market cap, so the board's claims never mix with live prices.</p>
+  </div>
+  <div class="tablewrap">
+    <table class="board live">
+      <thead><tr><th class="num">#</th><th>Protocol</th><th>Category</th><th class="num">Market cap</th><th class="num">TVL</th><th class="num">mcap / TVL</th><th class="num">7d TVL</th><th>Listed</th></tr></thead>
+      <tbody id="live-rows"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="view-ledger" class="view" hidden>
+  <div class="viewhead">
+    <h2>Every one of the snapshot's protocols, in exactly one group</h2>
+    <p>Classification runs top to bottom; the first group that matches holds the protocol. Ranked rows are on the board; a kin row is on the board at a 0.25 discount and also appears here.</p>
+  </div>
+  <div class="ledgroups" id="ledger"></div>
+</section>
+
+<section id="view-method" class="view" hidden>
+  <div class="viewhead">
+    <h2>The model, and how well it holds up on tokens it never saw</h2>
+    <p>R1 is a flat multiple; R2 adds the fitted scale curve; R3 adds the shrunk category effect; R4 adds growth and age. Every rung is tested leave-one-out and older-to-newer. The board uses R4.</p>
+  </div>
+  <div class="methodgrid">
+    <div class="card"><div class="cardtitle">Held-out ladder</div><div id="ladder"></div></div>
+    <div class="card"><div class="cardtitle">Interval coverage</div><div id="coverage"></div></div>
+    <div class="card"><div class="cardtitle">Fitted constants</div><div id="constants"></div></div>
+  </div>
+  <div class="card wide"><div class="cardtitle">Assumptions, stated once</div><ol id="assumptions"></ol></div>
+  <div class="card wide"><div class="cardtitle">Gas assumption per transaction</div><div id="gas"></div></div>
+</section>
+</main>
+
+<dialog id="detail" aria-labelledby="detail-name">
+  <div class="dialoghead">
+    <div>
+      <div class="eyebrow" id="detail-eyebrow"></div>
+      <h2 id="detail-name"></h2>
+    </div>
+    <button class="close" id="detail-close" aria-label="Close">Close</button>
+  </div>
+  <div id="detail-body"></div>
+</dialog>
+
+<footer>
+  <span id="foot"></span>
+  <span>Values are this entry's claim from the frozen snapshot, not a prediction that a token will be issued.</span>
+</footer>
+
+<script src="../data.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
